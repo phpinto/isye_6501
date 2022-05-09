@@ -1,0 +1,177 @@
+---
+title: "ISYE 6501"
+subtitle: "Homework 1"
+author: "Artur Cabral, Marta Bras, Pedro Pinto, Katie Price"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(kernlab)
+library(kknn)
+library(caret)
+library(e1071)
+```
+# Question 2.1
+
+***Describe a situation or problem from your job, everyday life, current events, etc., for which a classification model would be appropriate. List some (up to 5) predictors that you might use.***
+
+An example of a situation is deciding if a student is accepted or not in the MSA program. 
+
+The class in this case would be 0 - not accepted or 1 - accepted. 
+
+The classifiers could be for example: 
+  
+  1. Statistics/probability background (1-yes, 0 - no)
+  
+  2. Coding background (1-yes, 0 - no)
+  
+  3. GPA
+  
+  4. GRE score
+  
+  5. Number of years of work experience
+
+# Question 2.2 
+
+***2.2.1 Using the support vector machine function ksvm contained in the R package kernlab, find a good classifier for this data. Show the equation of your classifier, and how well it classifies the data points in the full data set.  (Don’t worry about test/validation data yet; we’ll cover that topic soon.)***
+
+### 1. Importing and preparing the data 
+
+```{r}
+credit_card <- read.table("credit_card_data-headers.txt", sep= "", header = TRUE)
+credit_card <- data.matrix(credit_card)
+credit_card[,11]  <- as.factor(credit_card[,11])
+class <- credit_card[,11]
+classifiers <-  credit_card[,1:10]
+```
+
+
+### 2. Looping through multiple values of C to find the one that minimizes training error
+
+The C parameters balances the trade-off between having a large margin and separating the positive and
+unlabeled on the training set. It is important to choose a C parameter that that allows for good generalization. Instead of testing manually, we can do it in a loop.
+
+```{r, echo = TRUE, results = FALSE, warning=FALSE}
+cValues <- c(0.00001, 0.001, 0.01, 0.1, 10, 20, 30, 40, 50, 80, 100, 1000, 1000000)
+
+for(i in cValues){
+  model <-  ksvm(classifiers, class, kernel="vanilladot", type = "C-svc", C=i, scaled=TRUE)
+  pred <- predict(model,classifiers)
+  confusionMatrix <- confusionMatrix(as.factor(pred), as.factor(class))
+  accuracy <- confusionMatrix$overall["Accuracy"]*100
+  cat("\nAccuracy: ", accuracy, "%")
+}
+```
+
+With the C values used, we conclude that training error is the same for a value of C higher than 0.00001 and below 1000000. This interval does not provide us information on what value to use. 
+
+We need to find another way to chose the best C value. To do so, we can use the tune() function from e1071 to test various C values.
+
+The tune function performes a grid search using a 10 fold cross validation to select the best C value to maximize accuracy in the testing datasets.
+
+### 3. Using the tune function to chose the optimal C
+
+```{r}
+#creating dataframe
+credit_card_2 <- data.frame(classifiers =classifiers, class)
+
+# find optimal cost of misclassification
+svmfit <- svm(class~., data = credit_card_2, kernel = "linear", cost = 10, gamma = 1)
+
+tune.out <- tune(svm, class~., data = credit_card_2, kernel = "linear",
+                 ranges = list(cost = c(0.001, 100,0.01, 0.1, 1, 5, 10, 100)))
+
+plot(svmfit, credit_card_2)
+
+# extract the best model
+(bestmod <- tune.out$best.model)
+
+plot(tune.out)
+
+```
+
+From the dataset, the optimal C is 0.01. We can now build the ksvm model usimg this value for C. 
+
+### 4. KSVM model and results
+
+Using the 0.01 value for C from tune function, we get that the best model is:
+```{r}
+best_model <- ksvm(classifiers, class, kernel="vanilladot", type = "C-svc", C=0.01,scaled=TRUE)
+best_model 
+
+ypred <- predict(best_model, classifiers)
+misclass <- table(predict = ypred, truth = class)
+
+misclass
+
+```
+Our model has an accuracy of 86.4% in the training dataset. It produces 286 true negatives and 279 true positives, vs 17 false positives and 72 false negatives. 
+
+
+### 5. Decision boundary function
+
+```{r}
+# calculate a1…am
+a <- colSums(best_model@xmatrix[[1]] * best_model@coef[[1]])
+a
+# calculate a0
+a0 <- best_model@b
+a0
+
+```
+
+The decision boundary function is: 
+
+*-0.08198854 + -0.0001500738A1 + -0.0014818294A2 + 0.0014083130A3 + 0.0072863886A8 + 0.9916470037A9 +  -0.0044661236A10 + 0.0071482899A11 + -0.0005468386A2 + -0.0016930578A14 + 0.1054824270A15*
+
+
+
+***2.2.2 You are welcome, but not required, to try other (nonlinear) kernels as well; we’re not covering them in this course, but they can sometimes be useful and might provide better predictions than vanilladot.***
+
+We tried multiple kernel functions and the one below registered the highest accuracy:
+
+```{r}
+model <- ksvm(classifiers, class, kernel="splinedot", type = "C-svc", C=10,scaled=TRUE)
+pred <- predict(model,classifiers)
+confusionMatrix <- confusionMatrix(as.factor(pred), as.factor(class))
+accuracy <- confusionMatrix$overall["Accuracy"]*100
+accuracy 
+
+# calculate a1…am
+a <- colSums(model@xmatrix[[1]] * model@coef[[1]])
+a
+# calculate a0
+a0 <- model@b
+a0
+```
+
+Using the splinedot kernel we minimize the training set error.
+
+
+
+***2.2.3 Using the k-nearest-neighbors classification function kknn contained in the R kknn package, suggest a good value of k, and show how well it classifies that data points in the full data set.  Don’t forget to scale the data (scale=TRUE in kknn).***
+
+```{r}
+credit_card_df <- read.table("credit_card_data.txt", sep="",header = TRUE)
+df2<-credit_card_df[complete.cases(credit_card_df),]
+v_accuracy <- vector()
+for (k in 1:30){
+    pred <- c()
+    for (i in 1:nrow(credit_card_df)){
+        knn <- kknn(X1.4 ~ .,credit_card_df[-i,], credit_card_df[i, ], k = k, distance=2,kernel="rectangular",scale=TRUE)
+        pred <- c(pred, as.integer(fitted(knn)+0.5))
+    }
+    #pred <- pred-1
+    accuracy <- sum(pred == credit_card_df[,11]) / nrow(credit_card_df)
+    cat("\n For K = ", k, "accuracy = ", accuracy, "\n")
+    v_accuracy <- c(v_accuracy,accuracy)
+}
+#v_accuracy
+cat("\n The best value of k is K = ", match(c(max(v_accuracy,na.rm = TRUE)),v_accuracy), " with accuracy = ", max(v_accuracy,na.rm = TRUE), "\n")
+```
+
+The accuracy is higher using a SVM model than using the k-nearest-neighbors model.

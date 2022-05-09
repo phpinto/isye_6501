@@ -1,0 +1,60 @@
+---
+title: "ISYE 6501"
+subtitle: "Homework 1"
+output: html_document
+theme: cosmo
+---
+
+# ```{r setup, include=FALSE}
+# knitr::opts_chunk$set(echo = TRUE)
+# library(kernlab)
+# library(kknn)
+# ```
+# ## Question 2.1
+# 
+# *Describe a situation or problem from your job, everyday life, current events, etc., for which a classification model would be appropriate. List some (up to 5) predictors that you might use.*
+# 
+#   An example of a situation could be deciding if a student is accepted in the MSA program. The class in this case would be 0 - not accepted or 1 - accepted. The classifiers could be for example: 
+#   
+#   1. Statistics/probability background (1-yes, 0 - no)
+#   
+#   2. Computing/programming background (1-yes, 0 - no)
+#   
+#   3. GPA
+#   
+#   4. GRE score
+# 
+# ## Question 2.2 
+# 
+*3.	Using the k-nearest-neighbors classification function kknn contained in the R kknn package, suggest a good value of k, and show how well it classifies that data points in the full data set.  Don't forget to scale the data (scale=TRUE in kknn).*
+
+###Creating training and testing dataset
+
+```{r}
+library(kernlab)
+library(kknn)
+# credit_card <- read.table("credit_card_data-headers.txt", sep= "", header = TRUE)
+# credit_card <- data.matrix(credit_card)
+#credit_card[,11]  <- as.factor(credit_card[,11])
+#class <- credit_card[,11]
+# classifiers <-  credit_card[,1:10]
+credit_card_df <- read.table("credit_card_data.txt", sep="",header = TRUE)
+df2<-credit_card_df[complete.cases(credit_card_df),]
+
+v_accuracy <- vector()
+
+for (k in 1:30){
+    pred <- c()
+    for (i in 1:nrow(credit_card_df)){
+        knn <- kknn(X1.4 ~ .,credit_card_df[-i,], credit_card_df[i, ], k = k, distance=2,kernel="rectangular",scale=TRUE)
+        pred <- c(pred, as.integer(fitted(knn)+0.5))
+    }
+    #pred <- pred-1
+    accuracy <- sum(pred == credit_card_df[,11]) / nrow(credit_card_df)
+    cat("\n For K = ", k, "accuracy = ", accuracy, "\n")
+    v_accuracy <- c(v_accuracy,accuracy)
+}
+#v_accuracy
+cat("\n The best value of k is K = ", match(c(max(v_accuracy,na.rm = TRUE)),v_accuracy), " with accuracy = ", max(v_accuracy,na.rm = TRUE), "\n")
+
+```
