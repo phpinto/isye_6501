@@ -1,0 +1,493 @@
+---
+title: "ISYE 6501"
+subtitle: "Homework 2"
+author: "Artur Cabral, Marta Bras, Pedro Pinto, Katie Price"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+    df_print: paged
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(kernlab)
+library(kknn)
+library(caret)
+library(e1071)
+library(knitr)
+library(kableExtra)
+library(colorspace)
+```
+
+# Question 3.1
+
+***Using the same data set (credit_card_data.txt or credit_card_data-headers.txt) as in Question 2.2, use the ksvm or kknn function to find a good classifier:***
+  
+##	1. Cross-validation: kkn model
+  
+### Importing and preparing the data 
+  
+```{r}
+credit_card <- read.table("credit_card_data-headers.txt", sep= "", header = TRUE)
+credit_card[,11]  <- factor(credit_card[,11])
+
+```
+
+
+### Choosing best model {.tabset}
+
+The kknn package has a function - train kknn - that performs crossvalidation in 2 ways: 1) k-fold crossvalidation (cv.kknn) and 2) leave-one-out crossvalidation (train.kknn). The caret package also offers a train function to perform k-fold crossvalidation. 
+
+In the next steps, we perform the crossvalidation with the 3 functions, to understand which one and what number of neighbors provide the highest accuracy.
+
+#### cv.kknn
+
+cv.kkn uses k-fold crossvalidation: the dataset is split into a K number of sections/folds where each fold is used as a testing set at some point.
+
+```{r}
+# setting seed for reproducibility
+set.seed(123) 
+
+# looping through different numbers of neighbors to find the perfect number using cv.kknn for crossvalidation
+v_accuracy <- vector()
+
+for (k in 1:30){
+  pred <- c()
+  knn <- cv.kknn(R1 ~ .,credit_card , k = k, kcv = 10,  scale=TRUE)
+  pred <- c(pred, as.integer(knn[[1]][,2])-1) # rounding prediction to either one or zero
+  accuracy <- sum(pred == credit_card[,11]) / nrow(credit_card)
+  cat("\n For K = ", k, "accuracy = ", accuracy, "\n")
+  v_accuracy <- c(v_accuracy,accuracy)
+}
+
+#best accuracy
+cat("\n The best value of k is K = ", match(c(max(v_accuracy,na.rm = TRUE)),v_accuracy), " with accuracy = ", max(v_accuracy,na.rm = TRUE), "\n")
+
+#outputting the results 
+number <-  seq((1: length(v_accuracy)))
+accuracy <- cbind(round(v_accuracy,4), number)
+colnames(accuracy) <- c("accuracy","k")
+accuracy <- as.data.frame(accuracy)
+
+ggplot(accuracy, aes(x=k, y=accuracy)) +
+  geom_point(color = "#159957") +
+  ggtitle("Accuracy levels for different k values")
+```
+
+
+#### train.kknn
+
+train.kkn uses leave-one-out crossvalidation - the data is trained on every point except one, for which the prediction is made. 
+
+```{r}
+# setting seed for reproducibility
+set.seed(123) 
+
+# Fitting model with multiple k values
+model <- train.kknn(R1~.,credit_card,kmax=30,scale=TRUE)
+best_parameter = as.integer(model$best.parameters[2]$k)
+min_error = model$MISCLASS[best_parameter]
+accuracy = (1 - min_error) 
+
+
+cat("\n The best value of k is K = ", best_parameter, " with accuracy = ",  accuracy)
+
+#outputting the results 
+plot(model)
+```
+
+
+```{r}
+#trying different kernells
+model_2 <- train.kknn(R1~., credit_card, kmax = 30, kernel = 
+                        c("triangular", "rectangular", "epanechnikov", "optimal"), distance = 2)
+
+plot(model_2)
+```
+
+
+#### train from caret package
+
+We can also use the caret package which has the train function to perform k-fold crossvalidation.
+
+```{r}
+#setting seed for reproducibility
+set.seed(123) 
+
+#creating the train control parameter wiht 10 folds and 5 repetitions
+trControl <- trainControl(method  = "repeatedcv",
+                          number  = 10,
+                          repeats = 5)
+
+#ftting the model with the defined train control
+model <- train(R1 ~ A1 + A2 + A3 + A8 + A9 + A10 + A11 + A12 + A14 + A15,
+               method     = "knn",
+               trControl  = trControl,
+               metric     = "Accuracy",
+               data       = credit_card,
+               preProcess = c("center", "scale"),
+               tuneLength = 30)
+
+#best parameters
+index = which.max(model$results[,2])
+accuracy = model$results[index,2]
+k = model$results[index,1]
+
+cat("\n The best value of k is K = ", k, " with accuracy = ",  accuracy)
+
+
+#outputting the results 
+plot(model)
+```
+
+
+#### Conclusion
+
+The best accuracy is obtained with the **17 neighbors** using **cv.kknn**.
+
+## 2. Cross-validation: ksvm model {.tabset}
+
+### k-fold Cross-Validation:
+```{r}
+#Performing k-fold cross-validation usign the tune function from the e1071 library:
+
+#Preparing data
+
+credit_card_svm <- data.matrix(credit_card)
+class <- credit_card_svm[,11]
+predictors <-  credit_card_svm[,1:10]
+
+#creating dataframe
+credit_card_2 <- data.frame(predictors =predictors, class)
+
+# find optimal cost of misclassification
+svmfit <- svm(class~., data = credit_card_2, kernel = "linear", cost = 10, gamma = 1)
+
+tune.out <- tune(svm, class~., data = credit_card_2, kernel = "linear",
+                 ranges = list(cost = c(0.001, 100,0.01, 0.1, 1, 5, 10, 100)))
+
+# extract the best model
+(bestmod <- tune.out$best.model)
+
+#graph of error values for different C values
+
+plot(tune.out)
+```
+
+### KSVM model and results
+
+Using the 0.01 value for C from tune function, we get that the best model is:
+
+```{r}
+best_model <- ksvm(predictors, class, kernel="vanilladot", type = "C-svc", C=0.01,scaled=TRUE)
+
+#printing parameters
+best_model 
+
+#predicting for dataset
+ypred <- predict(best_model, predictors)
+
+#plotting confusion matrix
+misclass <- table(predict = ypred, truth = class)
+misclass
+
+```
+
+Our model has an accuracy of 86.4% in the training dataset. It produces 286 true negatives and 279 true positives, vs 17 false positives and 72 false negatives. 
+
+
+### Decision boundary function
+
+```{r}
+# calculate a1…am
+a <- colSums(best_model@xmatrix[[1]] * best_model@coef[[1]])
+a
+# calculate a0
+a0 <- best_model@b
+a0
+
+```
+
+The decision boundary function is: 
+
+*-0.08198854 + -0.0001500738A1 + -0.0014818294A2 + 0.0014083130A3 + 0.0072863886A8 + 0.9916470037A9 +  -0.0044661236A10 + 0.0071482899A11 + -0.0005468386A2 + -0.0016930578A14 + 0.1054824270A15*
+
+
+
+
+
+## 3. Training, validation, and testing: kknn
+
+
+### Splitting data into training, validation and testing
+
+```{r}
+#setting seed for reproducibility
+set.seed(123)
+
+#setting 60% for training
+ind <- sample(1:nrow(credit_card),floor(nrow(credit_card)*0.60)) 
+credit_card_training <- credit_card[ind,]
+
+#setting half of remaining for validation
+credit_card_remaining <- credit_card[-ind,]
+ind_2 <- sample(1:nrow(credit_card_remaining),floor(nrow(credit_card_remaining)*0.50)) 
+credit_card_val <- credit_card_remaining[ind_2,]
+
+#setting half of remaining for testing
+credit_card_test <- credit_card_remaining[-ind_2,]
+```
+
+
+
+### Building the model and checking accuracy 
+
+
+```{r}
+
+# looping through different numbers of neighbors to find the perfect number using kknn function
+
+v_accuracy <- vector()
+
+for (k in 1:30){
+  pred <- c()
+  knn <- kknn(R1 ~ .,credit_card_training,credit_card_val, k = k,  scale=TRUE)
+  pred <- c(pred, as.integer(fitted(knn))-1) # rounding prediction to either one or zero
+  #pred <- pred-1
+  accuracy <- sum(pred == credit_card_val[,11]) / nrow(credit_card_val)
+  cat("\n For K = ", k, "accuracy = ", accuracy, "\n")
+  v_accuracy <- c(v_accuracy,accuracy)
+}
+
+#best accuracy in validation dataset
+
+cat("\n The best value of k is K = ", match(c(max(v_accuracy,na.rm = TRUE)),v_accuracy), " with accuracy in validation dataset of = ", max(v_accuracy,na.rm = TRUE), "\n")
+```
+
+### Checking accuracy on the testing dataset 
+
+```{r}
+# fitting model with best k number
+knn_test <- kknn(R1 ~.,credit_card_training,credit_card_test, k = match(c(max(v_accuracy,na.rm = TRUE)), v_accuracy), scale=TRUE)
+
+#predict in test dataset
+pred_test <- as.integer(fitted(knn_test))-1
+
+#accuracy in testing dataset
+accuracy_test <- sum(pred_test == credit_card_test[,11]) / nrow(credit_card_test)
+
+
+cat("\n The performance of the model in the test dataset is: ", accuracy_test, "\n")
+
+```
+
+
+# Question 4.1
+
+***Describe a situation or problem from your job, everyday life, current events, etc., for which a clustering model would be appropriate. List some (up to 5) predictors that you might use.***
+
+Clustering would be appropriate to study earth-quakes. Based on the areas hit by an earthquake in a region, clustering can help analyse the next probable location where the earthquake can occur.   
+The predictors would be for example:   
+
+1. Past Events: previous earthquakes occurences in the same region, and its parameters 
+2. Changes in velocity of primary and secondary seismic waves
+3. Random emissions
+4. Electromagnetic anomalies
+
+
+Identifying regions at-risk might help governments better alocate resources to these areas to develop better infrastructure and prevent catastrophic outcomes. 
+  
+# Question 4.2
+  
+***Use the R function kmeans to cluster the points as well as possible. Report the best combination of predictors, your suggested value of k, and how well your best clustering predicts flower type.***
+  
+  
+## Importing and brief EDA of the data 
+
+```{r}
+#importing data
+iris <- iris
+classifiers <- iris[,1:4]
+class <- iris[,5]
+```
+```{r}
+#getting a glimpse of data
+glimpse(iris)
+```
+
+
+```{r}
+#number of observations per plant type
+dt <- iris %>% group_by(Species) %>% 
+  summarize(number_plants = length(Species)
+  )
+
+kable(dt, caption = "Number of observations per specie type") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+#main statistics for sepal length
+dt <- iris %>% group_by(Species) %>% 
+  summarize(
+    average = mean(Sepal.Length),
+    max = max(Sepal.Length),
+    min = min(Sepal.Length),
+    var = round(var(Sepal.Length),2))
+
+kable(dt, caption = "Main statistics for sepal length") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+#main statistics for sepal width
+dt <- iris %>% group_by(Species) %>% 
+  summarize(
+    average = mean(Sepal.Width),
+    max = max(Sepal.Width),
+    min = min(Sepal.Width),
+    var = round(var(Sepal.Width),2))
+
+kable(dt, caption = "Main statistics for sepal width") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+#main statistics for petal length
+dt <- iris %>% group_by(Species) %>% 
+  summarize(
+    average = mean(Petal.Length),
+    max = max(Petal.Length),
+    min = min(Petal.Length),
+    var = round(var(Petal.Length),2))
+
+kable(dt, caption = "Main statistics for petal length") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+#main statistics for petal width
+dt <- iris %>% group_by(Species) %>% 
+  summarize(
+    average = mean(Petal.Width),
+    max = max(Petal.Width),
+    min = min(Petal.Width),
+    var = round(var(Petal.Width),2))
+
+kable(dt, caption = "Main statistics for petal width") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+```
+
+
+```{r}
+#scatter plot 1
+scatter <- ggplot(data=iris, aes(x = Sepal.Length, y = Sepal.Width)) 
+scatter + geom_point(aes(color=Species, shape=Species)) +
+  xlab("Sepal Length") +  ylab("Sepal Width") +
+  ggtitle("Sepal Length and Width per species")
+```
+
+```{r}
+#scatter plot 2
+scatter <- ggplot(data=iris, aes(x = Sepal.Length, y = Sepal.Width)) 
+scatter + geom_point(aes(color=Species, shape=Species)) +
+  xlab("Petal Length") +  ylab("Petal Width") +
+  ggtitle("Petal Length and Width per species")
+```
+
+## Finding optimal number of clusters
+
+Because the starting assignments are random, we can specify nstart = 20. The algorithm will try 20 different random starting assignments and  select the one that has a lowest within cluster variation. 
+
+For the value of k, we know 3 is a good starting point but we can try different values to check which one provides the best classification model.
+
+We can also start by scaling the data, since that is a good practice for kmean.
+
+```{r}
+#scaling data
+set.seed(123)
+
+scale_data = matrix(nrow=nrow(classifiers), ncol=4)
+
+for (i in (1 : length(classifiers))) {
+  scale_data[,i] <- (classifiers[,i]-min(classifiers[,i]))/(max(classifiers)-min(classifiers[,i]))
+}
+```
+
+```{r}
+#trying different k values in the scaled data
+k_max = 10
+cluster = matrix(nrow=nrow(classifiers), ncol=k_max)
+distance = matrix(nrow=k_max, ncol=length(classifiers))
+total_withincluster = matrix(nrow=1, ncol=k_max)
+
+for (i in (1 : k_max)) {
+  models <- kmeans(scale_data[,1:4], i, nstart = 20)
+  cluster[,i] <- models$cluster
+  distance[i,] <- models$centers[models$cluster[i],]
+  total_withincluster[,i] <- models$tot.withinss
+}
+```
+
+```{r}
+#creating a Within Cluster plot
+plot(1:k_max,total_withincluster, type= "b", xlab = "Number of clusters(k)", ylab = "Within cluster sum of squares")
+```
+
+Looking at the Within Cluster graph, there seems to be an elbow at k = 3. We can use k = 3 in the final cluster model.
+
+## Building the model with 3 clusters for scaled data
+
+```{r}
+#model with k = 3
+model <- kmeans(scale_data[,1:4], 3, nstart = 20)
+
+model
+```
+
+
+```{r}
+#plotting the classifications for k = 3 with cluster vector
+table(cluster[,3],class)
+```
+
+Looking at the results, setosa appears to be class 2, versicolor class 1 and virginica class 3. Setosa was always correctly classified while versicolor was incorrectly classified as virginica in 9 cases. Virginica was incorrectly classified as setosa in 15 cases.
+Accuracy would be given by: (50+41+35)/(50+41+9+15+35) = 84%.
+  
+```{r}
+#plotting clusters for petal length and petal width
+ggplot(iris, aes(Petal.Length, Petal.Width, color = as.factor(cluster[,3]), shape=Species)) + geom_point() + ggtitle("3 clusters with Petal Width and Petal Length")
+
+#plotting clusters for sepal width and petal width
+ggplot(iris, aes(Petal.Width, Sepal.Width, color = as.factor(cluster[,3]), shape=Species)) + geom_point() + ggtitle("3 clusters with Sepal Width and Petal Width")
+
+```
+  
+
+## Building the model with 4 clusters for scaled data
+
+We can also see how the model with 4 clusters performed and how the model with 3 clusters performed in the variable before being centered.
+
+```{r}
+table(cluster[,4],class)
+```
+
+```{r}
+#plotting clusters for petal length and petal width
+ggplot(iris, aes(Petal.Length, Petal.Width, color = as.factor(cluster[,4]), shape=Species)) + geom_point() + ggtitle("4 clusters with Petal Width and Petal Length")
+```
+
+The model using 4 clusters, classifies setosa as class 3, versicolor as class 1 and class 3 and virginica as class 3. The accuracy for this mdoel is given by (50+27+23+33)/(50+27+23+33+14+3) = 87%. The accuracy is higher for k = 4.
+
+## Trying with original data
+
+```{r}
+#not scaled data k = 3
+model <- kmeans(iris[,1:4], 3, nstart = 20)
+model
+```
+
+```{r}
+#not scaled data k = 3
+model <- kmeans(iris[,1:4], 4, nstart = 20)
+model
+```
+
+The model using **4 clusters** and **original data** provides the highest accuracy.
