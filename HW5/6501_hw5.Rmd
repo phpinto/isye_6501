@@ -1,0 +1,281 @@
+---
+title: "ISYE 6501"
+subtitle: "Homework 5"
+author: "Artur Cabral, Marta Bras, Pedro Pinto, Katie Price"
+date: "`r Sys.Date()`"
+output:  
+    pdf_document:
+    toc: true
+    toc_depth: 2
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(colorspace)
+library(corrplot)
+library(RColorBrewer)
+library(car)
+library(caret)
+library(LEAP)
+library(MASS)
+```
+
+# Question 8.1
+
+**Describe a situation or problem from your job, everyday life, current events, etc., for which a linear regression model would be appropriate. List some (up to 5) predictors that you might use.** 
+One recent situation that have happened in my country is the population being affected by the virus H1N1. The first time it happened the was no drug to combat the simptoms of the new virus, and a number of the population affected unfortunately died. The virus was studied, and a drug was developed to fight and cure the simptoms. The next year, there was a new problem, which was the stock of the drug not attending the demand from the population affected. A linear regression model could have been used to estimate the demand of the drug in a specific year, therefore pharmacies would stock accordingly, and properly attend the population. Possible predictors to be used in this model include, but not limited to: number of infecction cases, percentage of death by this infection, amount of drug produced, number of cases cured by the drug, average age of population infected, etc.
+
+
+# Question 8.2
+
+*Using crime data from http://www.statsci.org/data/general/uscrime.txt  (file uscrime.txt, description at http://www.statsci.org/data/general/uscrime.html ), use regression (a useful R function is lm or glm) to predict the observed crime rate in a city with the following data:* 
+
+$M$ = 14.0
+$S0$ = 0
+$Ed$ = 10.0
+$Po1$ = 12.0
+$Po2$ = 15.5
+$LF$ = 0.640
+$MF$ = 94.0
+$Pop$ = 150
+$NW$ = 1.1
+$U1$ = 0.120
+$U2$ = 3.6
+$Wealth$ = 3200
+$Ineq$ = 20.1
+$Prob$ = 0.04
+$Time$ = 39.0
+
+*Show your model (factors used and their coefficients), the software output, and the quality of fit.*
+
+*Note that because there are only 47 data points and 15 predictors, you’ll probably notice some overfitting.  We’ll see ways of dealing with this sort of problem later in the course.*
+
+Before initating a linear regression model, it's important to look at the distribution of the variables and the relationship between them. 
+
+## 1. Importing and initial analysis of the data
+
+```{r}
+#reading the data 
+crime_data <- read.table("uscrime.txt", header = TRUE)
+
+# Overall statistics
+summary_table <- crime_data %>% 
+  summarize(number_states = nrow(crime_data),
+            total_crime_rate = sum(Crime),
+            average_crime_rate = mean(Crime),
+            min_crime_rate = min(Crime),
+            max_crime_rate = max(Crime))
+
+kable(summary_table, caption = "Crime Rate - overall statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+
+# Statistics per state
+summary_table_state <- crime_data %>% group_by(So) %>% 
+  summarize(number_states = nrow(crime_data),
+            total_crime_rate = sum(Crime),
+            average_crime_rate = mean(Crime),
+            min_crime_rate = min(Crime),
+            max_crime_rate = max(Crime))
+
+kable(summary_table_state, caption = "Crime Rate per state") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+
+# Crime rate per state
+## adding an index variable
+state <- seq(1, length(crime_data$So))
+crime_data_2 <- cbind(state, crime_data)
+state <- factor(crime_data_2$state)
+
+ggplot(crime_data_2, aes(x=state, y = Crime)) +
+  geom_col(color='darkblue') +
+  ggtitle("Crime rate per state") +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) +
+  theme(plot.title = element_text(size=18)) 
+```
+
+From the table above, we can see that the minimum crime rate between the 47 states is 342 crimes per 100,000 people. The maximum crime rate was 1993 per 100,000 people. The minimum and maximum crime rate are different from northern to southern states.
+We can also see some states have much higher crime rates than others.
+
+```{r}
+#Correlations between variables
+
+M <-cor(crime_data)
+corrplot(M, type="upper", order="hclust",
+         col=brewer.pal(n=8, name="RdYlBu"))
+```
+
+
+As we can see from the correlation matrix above, a lot of variables have correlations higher than 50% and some variables have correlations higher than 75%. Considering the small number of data points, the risk of over-fitting is especially high. For instances, variables Inequality and Wealth and variables Inequality and Education have correlations above 75%.
+
+
+After doing a preliminary analysis we know things we should be aware when building the regression model: 1. Y variable is not normally distributed and there are outliers in the data, 2. There is strong correlation between possible explanatory variables.
+```{r}
+#distribution of the y variable
+# Histogram of crime 
+ggplot(crime_data, aes(x=Crime)) + 
+  geom_histogram(fill = "darkblue") +
+  ggtitle("Histogram of crime rates") +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) +
+  theme(plot.title = element_text(size=18)) 
+
+##QQplot graph of crime rate overall
+qqPlot(crime_data$Crime, main = "Normal Q-Q plot", xlab = "Crime", ylab = "quantiles") 
+
+# Boxplots of crime rate 
+## changing to factor variable to use in the histogram
+crime_data$So <- factor(crime_data$So)
+
+ggplot(crime_data, aes(y=Crime)) +
+  geom_boxplot(color = "darkblue") +
+  ggtitle("Boxplot of crime rate - overall") +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) +
+  theme(plot.title = element_text(size=18)) 
+```
+
+
+The crime variable has a distribution with heavy tales on the right side, which is visible in both the qqplot and the histogram. 
+
+
+
+## 2. Linear regression model - all variables
+
+
+We will start by understnading how the model performs using all possible explanatory variables.
+
+```{r}
+#linear model with all explanatory variables
+model <- lm(Crime ~ . , data = crime_data)
+#summary model
+summary(model)
+```
+
+The model using all explanatory variables has a R2 of 80.3%. The adjusted R2 is significantly lower (70.8%) which might be a sign of overfitting. Additionally, only 5 out of the 15 variables are significant at a 5% significance level.
+
+To annalyze the goodness-of-the fit of the model it is important to plot the results of the model and understand if the assumptions for linear regression are being met or not.
+
+```{r}
+#plots of the results
+plot(model)
+```
+
+Looking at the residual vs fitted plot, we can see assumption of linearity and constant variance does not seem to hold as most of the data points are concentrated in the middle of. The QQplot reveals a distribution close to normal, with some outliers on both sides of the distribution.
+
+```{r}
+#predicting on the new data 
+newdata = data.frame(M=14.0, So = 0, Ed = 10.0, Po1 = 12.0, Po2 = 15.5, LF = 0.640, M.F = 94.0, Pop = 150, NW = 1.1, U1 = 0.120, U2 = 3.6, Wealth = 3200, Ineq = 20.1 , Prob = 0.04, Time = 39.0)
+newdata$So = as.factor(newdata$So)
+predict(model, newdata)
+```
+
+When we predict the crime rate in the linear model using all explanatory variables, the predicted crime rate is 155, half than the minimum crime rate in the database. 
+Not only the model includes variables that are not significant but it also results in questionable predictions.
+
+The model predicts that given the inputs for the explanatory variables, the overall crime rate will be 155 per 100,000 inhabitants.
+
+## 3. Linear regression model - forward selection
+
+
+To understand which variables to use in the model, we can use the regsubsets package in the leaps package. It returns multiple models with different sizes up to the maximum number of variables defined. It can also be used in combination with the caret package in R, allowing to perform cross-validation with the train() function. We will use the forwared selection, which starts with one variable and adds additionally variables based on which variable is the best for a specific criteria. It stops adding variables if they no longer make the model better based on that criteria.
+
+### 3.1. Leap function
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+step.model_1 <- train(Crime ~., data = crime_data,
+                    method = "leapForward", 
+                    tuneGrid = data.frame(nvmax = 1:15),
+                    trControl = train.control
+                    )
+
+#results from the mddel for different number of variables
+step.model_1$results
+
+#summary
+summary(step.model_1$finalModel)
+
+
+#model with selected variables
+model_2 <- lm(Crime ~ M + Ed + Po1 + U2 + Ineq + Prob, data = crime_data)
+
+#summary
+summary(model_2)
+
+#plot of the results
+plot(model_2)
+```
+
+Using the leap function with forward selection, we can see the best model has 6 variables as this is the model that minimizes the MAE on the testing datasets. The R2 from this model is slightly lower than the model with all variables (76% vs 80%) but the R2 adjusted is higher, which might indicates the model is less subject to overfitting. 
+
+Also, all the variables in this model are statistically significant and we removed the high correlation problem between inequality and wealth. 
+
+Looking at the residuals vs fitted plot, we see the residuals are better dispersed, not as concentrated in the middle as in the full model.
+
+```{r}
+#predicting on the new data 
+predict(model_2, newdata)
+```
+
+The prediction for the crime in the new model is  more reliable than in the full model, even though it is higher than the third quantile value for the variable. This might be a result of the outliers in the model, wich have a high impact, considering the small number of observations. 
+
+The model predicts that given the inputs for the explanatory variables, the overall crime rate will be 1302 per 100,000 inhabitants.
+
+
+### 3.2. Step function
+
+```{r results="hide"}
+# Set seed for reproducibility
+set.seed(123)
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+step.model <- train(Crime ~., data = crime_data,
+                    method = 'lmStepAIC', 
+                    trControl = train.control
+                    )
+
+```
+
+
+```{r}
+#results from the mddel for different number of variables
+step.model$results
+
+#summary
+summary(step.model$finalModel)
+
+
+#plot of the results
+plot(step.model$finalModel)
+```
+Using the step function to perform a stepwise function selection by AIC, we can see the best model has 8 variables as this model minimizes the AIC.The selection is done by testing different numbers of paramenters and the maximum likelyhood value that results in the lowest set of paramenters with best statistical significance for the model. The R2 from this model is slightly lower than the model with all variables (78% vs 80%) but the R2 adjusted is higher (74% vs 70%), which might indicates the model is less subject to overfitting.
+
+
+Looking at the residuals vs fitted plot, we see the residuals are better dispersed, not as concentrated in the middle as in the full model.
+```{r}
+#predicting on the new data 
+predict(step.model, newdata)
+```
+
+### 3.3. Conclusion
+
+Using the stepwise function selecting the lowest AIC, produces lower R2 than the full model but higher adjusted R2. Additionally, it only includes two variables that are not significant, comparing with 10 non significant variables in the first model.
+
+The leap function produces slightly lower R but the RMSE and MAE values in the training dataset are lower and it only includes significant variables. 
+
+
+Using the regression function from the leap function, the final model would be $-5040.50 + 105.02M + 196.47Ed + 115.02Po1 + 89.375U2 + 67.65Ineq -3801.84Prob$
+
+The prediction woould then be 1304.245 crimes per 100,000 inhabitants.
