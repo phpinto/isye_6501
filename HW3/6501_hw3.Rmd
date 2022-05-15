@@ -1,0 +1,599 @@
+---
+title: "ISYE 6501"
+subtitle: "Homework 3"
+author: "Artur Cabral, Marta Bras, Pedro Pinto, Katie Price"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: cerulean
+    df_print: paged
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(kernlab)
+library(knitr)
+library(kableExtra)
+library(colorspace)
+library(car)
+library(outliers)
+library(stats)
+```
+
+# Question 5.1
+
+***Using crime data from the file uscrime.txt (http://www.statsci.org/data/general/uscrime.txt, description at http://www.statsci.org/data/general/uscrime.html), test to see whether there are any outliers in the last column (number of crimes per 100,000 people).  Use the grubbs.test function in the outliers package in R.***
+  
+## Importing and EDA of data
+
+```{r}
+crime_data <- read.table("uscrime.txt", header = TRUE)
+
+# Differences between southern and other states
+summary_table <- crime_data %>% group_by(So) %>% 
+  summarize(total_crime_rate = sum(Crime),
+            average_crime_rate = mean(Crime),
+            min_crime_rate = min(Crime),
+            max_crime_rate = max(Crime),
+            average_time = mean(Time) ,
+            average_prob_imprisionment = mean(Prob) * 100)
+
+kable(summary_table, caption = "Differences between southern states and other states") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+# Boxplots of crime rate 
+## changing to factor variable to use in the histogram
+crime_data$So <- factor(crime_data$So)
+
+ggplot(crime_data, aes(y=Crime)) +
+  geom_boxplot(color = "darkblue") +
+  ggtitle("Boxplot of crime rate - overall") +
+  theme_minimal()+
+  theme(plot.title = element_text(size=18))
+
+
+ggplot(crime_data, aes(x=So, y=Crime, color=So)) +
+  geom_boxplot() +
+  ggtitle("Boxplot of crime rate - south vs other states") +
+  theme_minimal()+
+  theme(plot.title = element_text(size=18))
+
+
+# Crime rate per state
+## adding an index variable
+state <- seq(1, length(crime_data$So))
+crime_data <- cbind(state, crime_data)
+crime_data$state <- factor(crime_data$state)
+
+ggplot(crime_data, aes(x=state, y = Crime)) +
+  geom_point(color='darkblue') +
+  ggtitle("Crime rate per state") +
+  theme_minimal()+
+  theme(plot.title = element_text(size=18))
+
+
+
+# Histogram of crime rate overall
+ggplot(crime_data, aes(x=Crime)) + 
+  geom_histogram(fill = "darkblue") +
+  ggtitle("Histogram of crime rates") +
+  theme_minimal()+
+  theme(plot.title = element_text(size=18))
+
+##QQplot graph of crime rate overall
+qqPlot(crime_data$Crime, main = "Normal Q-Q plot", xlab = "Crime", ylab = "quantiles") 
+```
+
+
+Doing an EDA, we can see there seems to be differences between the **southern** states and the **other** states. The average probability of being imprisioned is lower in the southern states, as well as the average and total crime rate. Overall, the minimum crime rate is 342 and the maximum is 1993.
+
+* Overall boxplot -  **2 extreme values**, with crime rate higher than **1750**.
+
+* Southern vs non-southern states boxplot -  **extreme values mostly in the southern states**, in which the maximum point that clearly stands-out from the rest of the data.   The minimum values also seems to be further from the remaining vlaues.  The varaince in the data seems to be lower in the southern states, since the difference from the first to the third quantile is lower than the other states. That is also visible from the interquantile range. 
+
+* Crime rate per state - Some states might be outliers as they have maximum extreme values. For instances, state 3 and state 26 have much higher rates than the others. 
+
+* Histogram of crime rates -  outliers mostly in the **right tale of the distribution**.
+
+* QQplot -the crime rates follow a distribution that is close to normal with heavy tale on the right and outliers on the rigth side of distribution.
+
+
+## Using grubbs.test function
+
+The grubbs test function allows for two inputs:
+  
+***Opposite*** - if true: we don't want to check the value with largest difference from the mean, but opposite (lowest, if most suspicious is highest etc.)
+
+***Type***- 10 for one outlier, 11 for two outliers on opposite sides and 20 for two outliers in the same tail.
+
+***Two-sided*** - If true, the test is treated as 2 sided.
+
+We checked for one outlier in both sides of distribution and then for one outlier in each side of the distribution. 
+
+```{r}
+# One outlier on the right tale
+grubbs.test(crime_data$Crime, type = 10, opposite = FALSE, two.sided = FALSE)
+
+# One outlier on the left tale
+grubbs.test(crime_data$Crime, type = 10, opposite = TRUE, two.sided = FALSE)
+```
+
+If we do the test for the maximum value, the value of 1993 shows up as the highest crime rate in the population. 
+
+The **p-value is higher than 5%** so at a 5% significance level, 1993 is within the expect standard deviation and **is not an outlier**.
+
+If we do the test for one outlier on the right side, we can see the minimum valu of 342 is not significant as well. The p-value is not significant at a 5% significance level.
+
+
+```{r}
+# One outlier on the left tale
+grubbs.test(crime_data$Crime, type = 11, opposite = FALSE, two.sided = TRUE)
+```
+
+If we use the algorithm to find two outtliers, we can see that if we look for two outliers on opposite sides, then the two outliers together are significant because the **p-value is low**: **342 and 1993 are outliers**.
+
+The problem with using the two-sided test, is that from our data exploration we concluded that outliers would be mainly in the **right side of the tail**. Also, there appears to be more than one extreme value in the right tail and the grubbs.test algorithm does not allow us to check for **more than 2 outliers** in the same side, as the number of observations is not big enough.
+
+
+
+```{r}
+crime_data_2 <- subset(crime_data, Crime != 342 & Crime != 1993, select = c("Crime"))
+
+ggplot(crime_data_2, aes(y=Crime)) +
+    geom_boxplot(color='darkblue') +
+    ggtitle("Boxplot of crime rate - overall") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+
+grubbs.test(crime_data_2$Crime, type = 10, opposite = FALSE, two.sided = FALSE)
+```
+
+If we remove the two outliers and we test for outliers again, we see that we have a **new maximum value** that is an outlier at a 5% significance value: 1969.
+
+The detection of outliers depends not only on the data but also on the analysis we are trying to do. If we wanted to infer differences between southern and non southern states in terms of crime rate, excluding the outliers from the non southern states and leaving the outliers in the southern states might create bias in the results.
+
+
+# Question 6.1
+
+**Describe a situation or problem from your job, everyday life, current events, etc., for which a Change Detection model would be appropriate. Applying the CUSUM technique, how would you choose the critical value and the threshold?** 
+
+Working with sports data analytics, more specifically in volleyball, data is generated during every point of the game. A CUMSUM approach could be used to detect a change in players’ skills during a game, and alert the coaches to make sure it does not go unnoticed. Threshold and critical value would be decided upon the coach’s judgement of what is the expected improvement from each player in a specific skill. Since the data is already known, and classified by effectiveness, the change could be detected comparing the collected data with the expected improvement rate for each skill or player.
+
+
+# Question 6.2.1
+
+**1.	Using July through October daily-high-temperature data for Atlanta for 1996 through 2015, use a CUSUM approach to identify when unofficial summer ends (i.e., when the weather starts cooling off) each year.  You can get the data that you need from the file temps.txt or online, for example at http://www.iweathernet.com/atlanta-weather-records  or https://www.wunderground.com/history/airport/KFTY/2015/7/1/CustomHistory.html .  You can use R if you’d like, but it’s straightforward enough that an Excel spreadsheet can easily do the job too.**
+
+## 1. Importing the data 
+
+```{r}
+temperature <- read.table("temps.txt", header = TRUE)
+  
+#creating dataframe with average temperature in a day throughout the period:
+
+average_day <- rowMeans(temperature[c(2:length(temperature))], dims=1, na.rm=T)
+average_day <- as.data.frame(average_day)
+
+#adding the day
+date <- temperature$DAY
+average_day <- cbind(date, average_day) 
+index <- seq(1, length(average_day$date))
+
+##adding an index column
+average_day <- cbind(index, average_day) 
+
+average_day <- average_day%>% mutate(day = date) %>% 
+    separate(day, sep="-", into = c("day", "month")) 
+
+```
+
+
+## 2. Visualizing the data
+```{r}
+#plotting average daily temperature
+ggplot(average_day, aes(x=index, y = average_day)) +
+    geom_line(color = "darkblue") +
+    ggtitle("Average daily temperature for 1 July to 31 October (1996-2015)") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+
+average_day %>% filter(index == 62) 
+
+
+#boxplott of average daily temperature
+ggplot(average_day, aes(y=average_day)) +
+    geom_boxplot(color='darkblue') +
+    ggtitle("Boxplot of temperatures") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+
+#min, max and std dev of average temperatures
+average_day %>% 
+  summarize(min_average_temperature = min(average_day),
+            max_average_temperature = max(average_day),
+            median_average_temperature = median(average_day),
+            mean_average_temperature = mean(average_day),
+            standard_dev_temperature = sd(average_day)
+            )
+```
+
+
+
+Looking at the line plot, we can see that temperatures seem to go down steeply around index 62, which is the last day of August. The temperature is 85.9 in this day. 
+If we look at the boxplot, we can see the median value for average daily temperature is exactly this value. The mean average temperature in the interval is 83.
+
+
+## 3. Average and standard deviation - July
+
+```{r}
+july_data <- average_day %>%
+  filter(month == "Jul") %>% summarise(average_july = mean(average_day), max_july = max(average_day), min_july = min(average_day), sddev_jul = sd(average_day))
+
+#getting the average
+average_july = july_data[[1]]
+
+#getting the standard deviation
+sd_july = july_data[[4]]
+```
+                                     
+
+## 4. Cumsum function: C = July std.dev 
+
+```{r}
+#to define C, we can use the standard deviation of Juky as a minimum point. We can then test different values of C
+july_average <- july_data$average_july
+C <- (july_data$sddev_jul)
+
+#creating a dataframe with the july average, C value and average in the day
+average_day_1 <- cbind(july_average, C, average_day)
+
+#initating an empty matrix to store the cumsum values
+cumsum_matrix = matrix(nrow=length(average_day_1$july_average), ncol = length(C))
+
+
+#calculating the cumsum
+st <- 0
+
+for (i in (1: length(average_day_1$july_average))) {
+  cumsum_matrix[i,1] = max(0, (st + (average_day_1[[i,1]] - average_day_1[[i,5]] - average_day_1[[i,2]])))
+  st <- cumsum_matrix[i,1]
+}
+
+#plotting the cumsum values over time
+
+cumsum_matrix <- as.data.frame(cumsum_matrix)
+cumsum_matrix <- cbind(index, cumsum_matrix, average_day$date) 
+
+ggplot(cumsum_matrix, aes(y=V1)) +
+    geom_boxplot(color='darkblue') +
+    ggtitle("Boxplot of cumsum") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+         
+
+ggplot(cumsum_matrix, aes(x=index, y=V1)) +
+  geom_point(color='darkblue') +
+    ggtitle("Cumsum - plot") +
+    ylab("Cum sum value") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18)) 
+
+```
+
+
+## 5. Sensibility to different threshold values 
+
+```{r}
+#finding median value
+
+cumsum_matrix %>% 
+  mutate(median = median(V1)) %>% 
+  filter(V1 < median) %>% 
+  arrange(desc(V1)) %>% 
+  top_n(1, V1) 
+
+#finding quantile 45%
+
+cumsum_matrix %>% 
+  mutate(firstquantile = quantile(V1, probs = 0.45)) %>% 
+  filter(V1 < firstquantile) %>% 
+  arrange(desc(V1))%>% 
+  top_n(1, V1)
+
+
+#finding quantile 55%
+
+cumsum_matrix %>% 
+  mutate(lastquantile = quantile(V1, probs = 0.55)) %>% 
+  filter(V1 < lastquantile) %>% 
+  arrange(desc(V1)) %>% 
+  top_n(1, V1)
+
+#storing the median and quantiles
+
+median <- median(cumsum_matrix$V1)
+quantile_1 <- quantile(cumsum_matrix$V1, probs = 0.55)[[1]]
+quantile_2 <- quantile(cumsum_matrix$V1, probs = 0.45)[[1]]
+```
+
+
+As we can see from the boxplot and the table above, **median value** for cumsum of differences is **5.3**. If we use 5.3 as a **threshold** (T), the last day of summer would be **30 August**.
+
+If alternatively we look to a value sligthly lower to the median, for instances T = 1.0, then the last day of summer would be 16 July. If we look at a value slightly higher than the median, for instances T = 19.9, then the last day of Summer would be 6 September.
+
+
+## 6. Sensibility to different C value
+
+Instead of using C value = standard deviation of mean daily values in July, we can instead use the standard deviation of the overall mean daily values. 
+
+```{r}
+#We will now repeat using standard deviation of all months.
+
+july_average <- july_data$average_july
+C_2 <- sd(average_day$average_day)
+
+average_day_2 <- cbind(july_average, C_2, average_day)
+
+cumsum_matrix_2 = matrix(nrow=length(average_day_2$july_average), ncol = length(C_2))
+
+st <- 0
+
+for (i in (1: length(average_day_2$july_average))) {
+  cumsum_matrix_2[i,1] = max(0, (st + (average_day_2[[i,1]] - average_day_2[[i,5]] - average_day_2[[i,2]])))
+  st <- cumsum_matrix_2[i,1]
+}
+
+
+#plotting the cumsum values over time
+
+cumsum_matrix_2 <- as.data.frame(cumsum_matrix_2)
+cumsum_matrix_2 <- cbind(index,average_day$date, cumsum_matrix_2) 
+
+ggplot(cumsum_matrix_2, aes(y=V1)) +
+    geom_boxplot(color='darkblue') +
+    ggtitle("Boxplot of cumsum") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+         
+
+ggplot(cumsum_matrix_2, aes(x=index, y=V1)) +
+  geom_point(color='darkblue') +
+    ggtitle("Cumsum - plot") +
+    ylab("Cum sum value") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18)) 
+
+```
+
+With this C value, the cumsum value starts increasing sharply much after, which makes sense since the C value is higher. For this C value, inflexion point would be at index 80, on the **17th of September**.
+
+
+## 7. Combining different thresholds with different C values
+```{r}
+#creating a table that summarizes C, T, date and average temperature
+
+C_values <- matrix(c(C, C, C, C_2, C_2, C_2))
+
+t_values <- matrix(c(quantile_2, median, quantile_1, quantile_2, median, quantile_1))
+
+
+dates <- c("16-Jul","30-Aug", "6-Sep", "23-Sep", "25-Sep", "28-Sep")
+
+temperatures <- c(84.6, 85.80, 88.10,69.65,79.30, 78.65)
+
+summary_table <- cbind(round(C_values,0), round(t_values,0), dates, temperatures)
+
+colnames(summary_table) = c("C","T", "Date", "Avg. temperature")
+
+summary_table <- as.data.frame(summary_table)
+
+kable(summary_table, caption = "Different values for different combinations of C and T") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+```
+
+We can see from the cumsum model that the inputs of C and T **largely affect** the choice of what to consider the last day of summer. 
+
+From the graph that plotted the average daily temperatures, we see the **main pick is in the last day of August**. 
+
+Looking at the result from the table, **30-August** could be considered a good cut-off date for summer. This date takes as input a C of 1 which is the standard deviation of average daily temperatures in July and T of 5, which is the the median value of the results of the cumsum function.
+
+
+If we want to be more flexible, the second option of C = 1 and T = 20, corresponding to the 6th of September, is also a **good candidate**. 
+
+The other values seem to be extreme, compared to the plot line with average temperatures.
+
+
+# Question 6.2.2
+
+**2.	Use a CUSUM approach to make a judgment of whether Atlanta’s summer climate has gotten warmer in that time (and if so, when).**
+
+To answer this question we can use the cumsum function to understand if the average temperatures during the summer period have been increasing over the years.
+
+First thing we should do is limit database until the date we have defined in the previous question. 
+
+If we assume it to be 30-Aug, the database should not include observations after that.
+
+## 1. Limitting database to final of Summer 
+
+```{r}
+#adding an index function to identify the cutoff date
+index <- seq(1, length(temperature$DAY))
+temperature_2 <- cbind(index, temperature)
+
+#separating in the initial dataset to be able to aggregate by month
+temperature_2 <- temperature_2 %>% filter(index <62) %>%  
+    separate(DAY, sep="-", into = c("day", "month")) 
+
+```
+
+## 2. Computing the average per year
+
+```{r}
+temperature_2 <-  select(temperature_2, -c(day,index))
+
+temperature_2 <- temperature_2 %>% group_by(month) %>% summarise_all( ~mean(.)) 
+
+
+#creating a dataframe with rows = years and columns = months (transposing dataframe)
+temperature_2_g <- as.data.frame(t(temperature_2))
+  
+temperature_2_g <- cbind(newColName = rownames(temperature_2_g), temperature_2_g)
+rownames(temperature_2_g) <- 1:nrow(temperature_2_g)
+
+colnames(temperature_2_g) <- c("year", "aug", "jul")
+temperature_2_g <- temperature_2_g[-1,]
+
+temperature_2_g <- temperature_2_g %>% 
+  mutate(aug = as.numeric(as.character(aug)),
+          jul = as.numeric(as.character(jul)))
+
+  
+#plotting eveolution of average yearly temperatures in July and August
+ggplot(temperature_2_g, aes(x=year, y=jul)) +
+  geom_point(color = "darkblue")+
+    ggtitle("Average temperature in July over the years") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+
+
+ggplot(temperature_2_g, aes(x=year, y=aug)) +
+  geom_point(color = "darkblue")+
+    ggtitle("Average temperature in August over the years") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+
+```
+
+Looking at the graphs above, the years of **2010 and 2011** registered **higher** average temperatures in both **July and August**. **July** was also **hotter** in **2012**, while **August** had a **maximum average temperature in 2007**. 
+
+The main point is that it is **difficult finding a pattern in decreases in temperature** because the average temperature dropped again after 2012 and becasue the two months have different patterns. 
+
+In the code below, we will do the same analysis we did for the daily differences but using yearly differences instead.
+
+## 3. Cumsum function: C = 1997 std.dev
+
+```{r}
+#computing the averages
+
+average_year <-rowMeans(temperature_2_g[c(2:length(temperature_2_g))], dims=1, na.rm=T)
+
+average_year <- as.data.frame(average_year)
+
+#computing first year average using August and July
+
+average_first_year <- (temperature_2[[1,2]] + temperature_2[[2,2]])/2
+
+C <- (sd(temperature_2[1,2:length(temperature_2)]))
+
+average_year <- cbind(average_first_year, C, temperature_2_g)
+
+average_year <- as.data.frame(average_year)
+
+#computing cumsum function
+
+cumsum_matrix_year = matrix(nrow=length(average_year$average_first_year), ncol = length(C))
+
+st <- 0
+
+for (i in (1: length(average_year$average_first_year))) {
+  cumsum_matrix_year[i,1] = max(0, (st + (average_year[[i,1]] - average_year[[i,4]] - average_day_1[[i,2]])))
+  st <- cumsum_matrix_year[i,1]
+}
+
+
+#plotting the cumsum values over time
+cumsum_matrix_year <- as.data.frame(cumsum_matrix_year)
+cumsum_matrix_year <- cbind(cumsum_matrix_year, average_year$year)
+
+kable(cumsum_matrix_year, caption = "Cumsum values over the years") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+ggplot(cumsum_matrix_year, aes(y=V1)) +
+    geom_boxplot() +
+    ggtitle("Boxplot of cumsum") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18))
+         
+
+ggplot(cumsum_matrix_year, aes(x=average_year$year, y=V1)) +
+  geom_point() +
+    ggtitle("Cumsum - plot") +
+    ylab("Cum sum value") +
+    theme_minimal()+
+    theme(plot.title = element_text(size=18)) 
+
+```
+
+
+## 4. Sensibility to different threshold values 
+
+```{r}
+
+#storing the median and quantiles
+
+median <- median(cumsum_matrix_year$V1)
+
+quantile_1 <- quantile(cumsum_matrix_year$V1, probs = 0.7)[[1]]
+quantile_2 <- quantile(cumsum_matrix_year$V1, probs = 0.3)[[1]]
+
+#finding median value
+
+cumsum_matrix_year %>% 
+  filter(V1 < median) %>% 
+  arrange(desc(V1)) %>% 
+  top_n(1, V1) 
+
+#finding quantile 45%
+
+cumsum_matrix_year %>% 
+  filter(V1 < quantile_1) %>% 
+  arrange(desc(V1))%>% 
+  top_n(1, V1)
+
+
+#finding quantile 55%
+
+cumsum_matrix_year %>% 
+  filter(V1 < quantile_2) %>% 
+  arrange(desc(V1)) %>% 
+  top_n(1, V1)
+
+
+```
+
+
+## 5. Combining different thresholds for C = mean
+```{r}
+#creating a table that summarizes C, T, date and average temperature
+
+C_values <- matrix(c(C, C, C))
+
+t_values <- matrix(c(median, quantile_1, quantile_2))
+
+
+dates <- c("2008","2013", "2010")
+
+temperatures <- c(87.7,84.7,91.3)
+
+summary_table <- cbind(round(C_values,0), round(t_values,0), dates, temperatures)
+
+colnames(summary_table) = c("C","T", "Date", "Avg. temperature")
+
+summary_table <- as.data.frame(summary_table)
+
+kable(summary_table, caption = "Different values for different combinations of C and T") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+```
+
+As we had previously hypothesized from looking at the average yearly graphs, it is difficult to find the point where temperatures started changing because the temperatures go up and down from year to year. 
+
+Looking at the table, we can see this sensibility in values. If we increase the threshold slightly, the detected year decreases instead of increasing. 
+It is ambiguous to detect where there is a change because values have been going up and down and because the pattern is different from July to August.
+
+Looking at the previous plot we could say 2010 would be  the best year, with  C = 1 and T = 2 . 
