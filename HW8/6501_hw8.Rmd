@@ -1,0 +1,336 @@
+---
+title: "ISYE 6501"
+subtitle: "Homework 8"
+author: "Artur Cabral, Marta Bras, Pedro Pinto, Katie Price"
+date: "`r Sys.Date()`"
+output:  
+    pdf_document:
+    toc: true
+    toc_depth: 2
+---
+  
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(colorspace)
+library(corrplot)
+library(RColorBrewer)
+library(car)
+library(caret)
+library(LEAP)
+library(MASS)
+library(glmnet)
+library(Metrics)
+```
+
+# Question 11.1
+
+Using the crime data set uscrime.txt from Questions 8.2, 9.1, and 10.1, build a regression model using:
+
+  * 1.	Stepwise regression
+  * 2.	Lasso
+  * 3.	Elastic net
+
+
+For Parts 2 and 3, remember to scale the data first – otherwise, the regression coefficients will be on different scales and the constraint won’t have the desired effect.
+
+For Parts 2 and 3, use the glmnet function in R.  
+
+Notes on R:
+
+*	For the elastic net model, what we called $\lambda$ in the videos, glmnet calls “alpha”; you can get a range of results by varying alpha from 1 (lasso) to 0 (ridge regression) [and, of course, other values of alpha in between].
+
+*	In a function call like glmnet(x,y,family=”mgaussian”,alpha=1) the predictors x need to be in R’s matrix format, rather than data frame format.  You can convert a data frame to a matrix using as.matrix – for example, x <- as.matrix(data[,1:n-1])
+
+*	Rather than specifying a value of T, glmnet returns models for a variety of values of T. 
+
+
+## 1. Importing and initial analysis of the data
+
+```{r}
+#reading the data 
+crime_data <- read.table("uscrime.txt", header = TRUE)
+
+# Overall statistics
+summary_table <- crime_data %>% 
+  summarize(number_states = nrow(crime_data),
+            total_crime_rate = sum(Crime),
+            average_crime_rate = mean(Crime),
+            min_crime_rate = min(Crime),
+            max_crime_rate = max(Crime))
+
+kable(summary_table, caption = "Crime Rate - overall statistics") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+
+# Statistics per state
+summary_table_state <- crime_data %>% group_by(So) %>% 
+  summarize(number_states = nrow(crime_data),
+            total_crime_rate = sum(Crime),
+            average_crime_rate = mean(Crime),
+            min_crime_rate = min(Crime),
+            max_crime_rate = max(Crime))
+
+kable(summary_table_state, caption = "Crime Rate per state") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+
+
+# Crime rate per state
+## adding an index variable
+state <- seq(1, length(crime_data$So))
+crime_data_2 <- cbind(state, crime_data)
+state <- factor(crime_data_2$state)
+
+ggplot(crime_data_2, aes(x=state, y = Crime)) +
+  geom_col(color='darkblue') +
+  ggtitle("Crime rate per state") +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) +
+  theme(plot.title = element_text(size=18)) 
+```
+
+From the table above, we can see that the minimum crime rate between the 47 states is 342 crimes per 100,000 people. The maximum crime rate was 1993 per 100,000 people. The minimum and maximum crime rate are different from northern to southern states.
+We can also see some states have much higher crime rates than others.
+
+```{r}
+#Correlations between variables
+
+M <-cor(crime_data)
+corrplot(M, type="upper", order="hclust",
+         col=brewer.pal(n=8, name="RdYlBu"))
+```
+
+
+As we can see from the correlation matrix above, a lot of variables have correlations higher than 50% and some variables have correlations higher than 75%. Considering the small number of data points, the risk of over-fitting is especially high. For instances, variables Inequality and Wealth and variables Inequality and Education have correlations above 75%.
+
+
+After doing a preliminary analysis we know things we should be aware when building the regression model: 1. Y variable is not normally distributed and there are outliers in the data, 2. There is strong correlation between possible explanatory variables.
+```{r}
+#distribution of the y variable
+# Histogram of crime 
+ggplot(crime_data, aes(x=Crime)) + 
+  geom_histogram(fill = "darkblue") +
+  ggtitle("Histogram of crime rates") +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) +
+  theme(plot.title = element_text(size=18)) 
+
+##QQplot graph of crime rate overall
+qqPlot(crime_data$Crime, main = "Normal Q-Q plot", xlab = "Crime", ylab = "quantiles") 
+
+# Boxplots of crime rate 
+## changing to factor variable to use in the histogram
+crime_data$So <- factor(crime_data$So)
+
+ggplot(crime_data, aes(y=Crime)) +
+  geom_boxplot(color = "darkblue") +
+  ggtitle("Boxplot of crime rate - overall") +
+  theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()) +
+  theme(plot.title = element_text(size=18)) 
+```
+
+
+The crime variable has a distribution with heavy tales on the right side, which is visible in both the qqplot and the histogram. 
+
+
+
+## 2. Stepwise regression
+
+To perform variable selection, we can use stepwise regression. Stepwise regression can be performed forward - starting with no variables and adding variable by variable if they enhnace a specified criteria - or backward - starting with all variables and removing variable by variable if the removal enhances or has no impact on a specified criteria. 
+
+
+### 2.1. Leap package
+
+One of the ways to perform stepwise regression in R is to use the regsubsets function under the leaps package. 
+
+It returns multiple models with different sizes up to the maximum number of variables defined. It can also be used in combination with the caret package in R, allowing to perform cross-validation with the train() function. 
+
+Since the algorithm returns a best model of each size, the results do not depend on a penalty model for model size: it doesn’t make any difference to have an objective function (such as AIC, BIC,..)
+
+
+
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+# Set up repeated k-fold cross-validation
+train.control <- trainControl(method = "cv", number = 10)
+# Train the model
+step.model <- train(Crime ~., data = crime_data,
+                    method = "leapForward", 
+                    tuneGrid = data.frame(nvmax = 1:15),
+                    trControl = train.control
+                    )
+
+#results from the mddel for different number of variables
+step.model$results
+
+#summary
+summary(step.model$finalModel)
+
+
+#model with selected variables
+model <- lm(Crime ~ M + Ed + Po1 + U2 + Ineq + Prob, data = crime_data)
+#summary
+summary(model)
+
+#plot of the results
+plot(model$residuals)
+qqPlot(model$residuals, main = "Normal Q-Q plot", xlab = "Residuals", ylab = "quantiles") 
+
+```
+
+
+
+Using the leap function with forward selection, we can see the best model has 6 variables as this is the model that minimizes the MAE on the testing datasets. The R2 from this model is 76% and all the variables in this model are statistically significant. We can see that the resdiuals seem to be in line with the assumptions of constant variance, independence and normal distribution of the results. 
+
+The model with 6 variables has a RMSE of 220.2582 and a MAE of 178.4304	in the testing database. 
+
+We tried the same model using Backward selection for variable selection but it resulted in the same variables being picked up so we are not repeating it here. 
+
+
+### 2.2. MASS package
+
+We can use the stepwise regression on the MASS package in combination with Caret package as well. With this stepwise function we have an objective function which in this case is AIC. Since the function has backward stepwise as default, the algorithm tries multiple variables and finds the one that does not increase AIC when removed. It removes variables until there is no variable to remove that doesn't consequently increase AIC. 
+
+```{r results="hide"}
+# Set seed for reproducibility
+set.seed(123)
+
+# Train the model
+step.model_2 <- train(Crime ~., data = crime_data,
+                    method = 'lmStepAIC', 
+                    trControl = train.control
+                    )
+
+
+#results from the mddel for different number of variables
+step.model_2$results
+
+#summary
+summary(step.model_2$finalModel)
+
+```
+
+
+Using the MASS packkage to perform a stepwise function selection by AIC, we can see the best model has 8 variables as this model minimizes the AIC.The selection is done by testing different numbers of paramenters and the maximum likelyhood value that results in the lowest set of paramenters with best statistical significance for the model. The R2 from this model is 78%.
+
+The model has a RMSE of 268.0678 and a MAE of 214.3536. 
+
+
+## 3. Lasso Regression 
+
+Lasso Regression performs a type L1 regularization, adding a penalty equal to the absolute value of magnitude of coefficients. Using Lasso regression, some coefficients might become zero and get eliminated from the model. The lasso regression adds a tunning parameter that controls the strength of the L1 penalty. The higher the penalty, more coefficients are eliminated from the model. 
+
+
+```{r}
+#converting data to dataframe and scaling
+crime_data <- read.table("uscrime.txt", header = TRUE)
+
+crime_data_matrix <- as.matrix(scale(crime_data))
+
+predictors <- crime_data_matrix[,1:15]
+response <-  crime_data_matrix[,16]
+
+
+#Using cross validation for the Lasso regression
+model_lasso <- cv.glmnet(predictors, response, alpha = 1)
+
+#Finding optimal value of lambda that minimizes cross-validation errors
+plot(model_lasso)
+```
+
+
+The plot displays the cross-validation error according to the log of r $\lambda$ The left dashed vertical line indicates that the log of the optimal value of r $\lambda$ is approximately -3, which is the one that minimizes the prediction error. This r $\lambda$ value will give the most accurate model. The exact value of r $\lambda$ can be viewed as follow:s
+
+
+```{r}
+model_lasso$lambda.min
+```
+
+The function cv.glmnet() finds also the value of r $\lambda$ that gives the simplest model but also lies within one standard error of the optimal value of r $\lambda$ This value is called lambda.lse.
+
+
+```{r}
+model_lasso$lambda.1se
+```
+And the coefficients can be retrieved by doing:
+
+```{r}
+coef(model_lasso, model_lasso$lambda.1se)
+```
+
+We can see that by using Lasso, with the optimal lambda value, our final model has 5 variables, less than the resultant from stepwise regression.
+
+Computing the Lasso regression model with the optimal parameter for $\lambda$:
+
+```{r}
+# Split data into train (70%) and test (30%)
+crime_data_matrix_2 <- as.matrix((crime_data))
+
+ind <- sample(1:nrow(crime_data_matrix),floor(nrow(crime_data_matrix)*0.70)) 
+crime_data_matrix_train <- crime_data_matrix[ind,]
+crime_data_matrix_test <- crime_data_matrix[-ind,]
+
+yhat <- predict(model_lasso, s=model_lasso$lambda.min, newx=crime_data_matrix_test[,1:15])
+MSE <- mean((crime_data_matrix_test[,16] - yhat)^2)
+MSE
+```
+
+## 4. Elastic Net
+
+First, we have to find the best value for alpha. So, we loop through different values, and in each iteration we store the minimum values of MSE and lambda.min
+```{r}
+
+mse_array <- numeric()
+find_alpha <- function(num, scaled_data){
+    alpha <- num
+    elastic_net <- cv.glmnet(predictors,
+                        response,
+                        alpha = alpha,
+                        nfolds=5,
+                        type.measure="mse",
+                        family="gaussian",
+                        standardize=FALSE)
+    
+    mse_array <<- cbind(mse_array, c(alpha, min(elastic_net$cvm),elastic_net$lambda.min))    
+}
+
+# Loop over different values of alpha
+
+for (i in seq(.01,1,by = .01)){find_alpha(i,crime_data_matrix)}
+
+minIdx <- which.min(mse_array[2,])
+mse_array[2,minIdx]
+mse_array[1, minIdx]
+```
+Since we have found the best value of alpha to be 0.8, we will now run the elastic net.
+```{r}
+
+elastic_result <- cv.glmnet(predictors,
+                        response,
+                        alpha = 0.8,
+                        nfolds=5,
+                        type.measure="mse",
+                        family="gaussian",
+                        standardize=FALSE)
+
+coef(elastic_result, s = elastic_result$lambda.min)
+
+#So elastic_net selects 14 variables. Let's rerun lm using those features.
+
+elastic.lm <- lm(Crime ~ ., data = as.data.frame(crime_data_matrix[, -4]))
+
+summary(elastic.lm)
+
+
+
+```
+We are able to notice that the most siginificant variables are M, Ed, Po1, U2, Ineq, Prob.
+
+## 5. Conclusion
+
+We saw that all models agreed on the final 6 variables - M, Ed, Po1, U2, Ineq, Prob. Also, we were able to build a simpler model with just 5 features which had decent performance considering the number of features. It is interesting to notice that all the other models with more than 5 features did not have a much greater performance. In conclusion, we would choose the simpler models whenever performance was not affected because it provides the same result but easier interpretatio of results, and each feature's impact on prediction.
